@@ -1,0 +1,242 @@
+import pandas as pd
+
+# Output from OrthoFinder
+sco = pd.read_csv("proteomes/OrthoFinder/Results_Nov18/Orthogroups/Orthogroups_SingleCopyOrthologues.txt", header = None, names = ['group'])
+SCO_LIST = sco['group'].tolist()
+
+
+PAWNEE_GENES = pd.read_csv('Pawnee_transcript_paths.txt', delimiter = '\t', header=None, names = ['gene','path']).set_index('gene').to_dict()['path']
+LAKOTA1_CDS = '/home/jgroh/heterodichogamy/HC_locus_structure/Lakota_v1.cds'
+PAWNEE_CDS = '/home/jgroh/heterodichogamy/HC_locus_structure/Pawnee.cds'
+
+CSIN_CDS = '/home/jgroh/heterodichogamy/Carya_genome_assemblies/Carya_sinensis/Carya_sinensis_BNU_v1.cds'
+CCAT_CDS = '/home/jgroh/heterodichogamy/Carya_genome_assemblies/Carya_cathayensis/BNU/Carya_cathayensis_BNU_v1.cds'
+
+JREG_CDS = 'Jregia.cds'
+PSTR_CDS = 'Pstr.cds'
+
+rule all:
+  input:
+    "species_tree/single_copy_orthologs.treefile",
+    expand("single_copy_orthologs/{SCO}/aligned.fasta",SCO = SCO_LIST),
+    "gene_phylogenies/concat/concat.fa",
+    expand("gene_phylogenies/{gene}/aligned.contree", gene = PAWNEE_GENES.keys()),
+    expand("gene_phylogenies/{gene}/aligned.fa", gene = PAWNEE_GENES.keys()),
+    expand("reciprocal_best_hits/{gene}/{target}_to_pawnee.txt", gene = PAWNEE_GENES.keys(), target = ['lakota1', 'Csin', 'Ccat', 'Jreg', 'Pstr']),
+
+rule blastn_to_Lakota1:
+  input:
+    lakota1=LAKOTA1_CDS,
+    pawnee=PAWNEE_CDS,
+    qry=lambda wildcards: PAWNEE_GENES[wildcards.gene]
+  output:
+    hit1="reciprocal_best_hits/{gene}/pawnee_to_lakota1.txt",
+    fasta="reciprocal_best_hits/{gene}/lakota1.fasta",
+    hit2="reciprocal_best_hits/{gene}/lakota1_to_pawnee.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/blast.yaml"
+  resources:
+    mem_mb=5000,
+    runtime=5
+  shell:
+    """
+    blastn -db {input.lakota1} -query {input.qry} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit1} &&
+    awk '{{print $1}}' {output.hit1} | \
+        head -n1 | \
+        xargs -I {{}} samtools faidx {input.lakota1} {{}} > {output.fasta} &&
+        blastn -db {input.pawnee} -query {output.fasta} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit2} 
+    """
+   
+rule blastn_to_Csin:
+  input:
+    target=CSIN_CDS,
+    pawnee=PAWNEE_CDS,
+    qry=lambda wildcards: PAWNEE_GENES[wildcards.gene]
+  output:
+    hit1="reciprocal_best_hits/{gene}/pawnee_to_Csin.txt",
+    fasta="reciprocal_best_hits/{gene}/Csin.fasta",
+    hit2="reciprocal_best_hits/{gene}/Csin_to_pawnee.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/blast.yaml"
+  resources:
+    mem_mb=5000,
+    runtime=5
+  shell:
+    """
+    blastn -db {input.target} -query {input.qry} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit1} &&
+    awk '{{print $1}}' {output.hit1} | \
+        head -n1 | \
+        xargs -I {{}} samtools faidx {input.target} {{}} > {output.fasta} &&
+        blastn -db {input.pawnee} -query {output.fasta} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit2} 
+    """
+
+rule blastn_to_Ccat:
+  input:
+    target=CCAT_CDS,
+    pawnee=PAWNEE_CDS,
+    qry=lambda wildcards: PAWNEE_GENES[wildcards.gene]
+  output:
+    hit1="reciprocal_best_hits/{gene}/pawnee_to_Ccat.txt",
+    fasta="reciprocal_best_hits/{gene}/Ccat.fasta",
+    hit2="reciprocal_best_hits/{gene}/Ccat_to_pawnee.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/blast.yaml"
+  resources:
+    mem_mb=5000,
+    runtime=5
+  shell:
+    """
+    blastn -db {input.target} -query {input.qry} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit1} &&
+    awk '{{print $1}}' {output.hit1} | \
+        head -n1 | \
+        xargs -I {{}} samtools faidx {input.target} {{}} > {output.fasta} &&
+        blastn -db {input.pawnee} -query {output.fasta} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit2} 
+    """
+
+rule blastn_to_regia:
+  input:
+    target=JREG_CDS,
+    pawnee=PAWNEE_CDS,
+    qry=lambda wildcards: PAWNEE_GENES[wildcards.gene]
+  output:
+    hit1="reciprocal_best_hits/{gene}/pawnee_to_Jreg.txt",
+    fasta="reciprocal_best_hits/{gene}/Jreg.fasta",
+    hit2="reciprocal_best_hits/{gene}/Jreg_to_pawnee.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/blast.yaml"
+  resources:
+    mem_mb=5000,
+    runtime=5
+  shell:
+    """
+    blastn -db {input.target} -query {input.qry} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit1} &&
+    awk '{{print $1}}' {output.hit1} | \
+        head -n1 | \
+        xargs -I {{}} samtools faidx {input.target} {{}} > {output.fasta} &&
+        blastn -db {input.pawnee} -query {output.fasta} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit2} 
+    """
+
+rule blastn_to_Pstr:
+  input:
+    target=PSTR_CDS,
+    pawnee=PAWNEE_CDS,
+    qry=lambda wildcards: PAWNEE_GENES[wildcards.gene]
+  output:
+    hit1="reciprocal_best_hits/{gene}/pawnee_to_Pstr.txt",
+    fasta="reciprocal_best_hits/{gene}/Pstr.fasta",
+    hit2="reciprocal_best_hits/{gene}/Pstr_to_pawnee.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/blast.yaml"
+  resources:
+    mem_mb=5000,
+    runtime=5
+  shell:
+    """
+    blastn -db {input.target} -query {input.qry} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit1} &&
+    awk '{{print $1}}' {output.hit1} | \
+        head -n1 | \
+        xargs -I {{}} samtools faidx {input.target} {{}} > {output.fasta} &&
+        blastn -db {input.pawnee} -query {output.fasta} -max_hsps 1 -outfmt "6 sseqid pident" > {output.hit2} 
+    """
+
+rule align:
+  input:
+    "gene_phylogenies/{gene}/unaligned.fa"
+  output:
+    "gene_phylogenies/{gene}/aligned.fa"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/iqtree.yaml"
+  shell:
+    "muscle -align {input} -output {output}"
+
+rule gene_trees:
+  input:
+    "gene_phylogenies/{gene}/aligned.fa"
+  output:
+    "gene_phylogenies/{gene}/aligned.contree"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/iqtree.yaml"
+  shell:
+    "iqtree -s {input} -B 1000 --prefix gene_phylogenies/{wildcards.gene}/aligned"
+
+
+rule concat:
+  input:
+    expand("gene_phylogenies/{gene}/aligned.fa", gene = PAWNEE_GENES.keys()),
+  output:
+    "gene_phylogenies/concat/concat.fa"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/iqtree.yaml"
+  shell:
+    "seqkit concat {input} > {output}"
+
+
+sco = pd.read_csv("proteomes/OrthoFinder/Results_Nov18/Orthogroups/Orthogroups_SingleCopyOrthologues.txt", header = None, names = ['group'])
+sco_list = sco['group'].tolist()
+og = pd.read_csv("proteomes/OrthoFinder/Results_Nov18/Orthogroups/Orthogroups.tsv", delimiter = "\t")
+og.set_index("Orthogroup", inplace = True)
+
+rule extract_single_copy_orthologs:
+  input:
+    orthogroup_table = 'proteomes/OrthoFinder/Results_Nov18/Orthogroups/Orthogroups.tsv'
+  output:
+    "single_copy_orthologs/{og}/unaligned.fasta"
+  resources:
+    mem_mb=10000,
+    runtime=5
+  shell:
+    """
+    # get gene ID for each species, then extract it from fasta and write to file
+    CCATGENE=$(awk -v group={wildcards.og} '$1 == group {{print $2}}' {input.orthogroup_table})
+    python -m jcvi.formats.fasta extract CDS_longest_transcript/Ccat_nosplicevariants.cds $CCATGENE | sed "s/$CCATGENE/Ccat/g" >> single_copy_orthologs/{wildcards.og}/unaligned.fasta
+
+    CSINGENE=$(awk -v group={wildcards.og} '$1 == group {{print $3}}' {input.orthogroup_table})
+    python -m jcvi.formats.fasta extract CDS_longest_transcript/Csin_nosplicevariants.cds $CSINGENE | sed "s/$CSINGENE/Csin/g" >> single_copy_orthologs/{wildcards.og}/unaligned.fasta
+
+    JREGGENE=$(awk -v group={wildcards.og} '$1 == group {{print $4}}' {input.orthogroup_table})
+    python -m jcvi.formats.fasta extract CDS_longest_transcript/Jregia_nosplicevariants.cds $JREGGENE | sed "s/$JREGGENE/Jreg/g" >> single_copy_orthologs/{wildcards.og}/unaligned.fasta
+
+    LAK1GENE=$(awk -v group={wildcards.og} '$1 == group {{print $5}}' {input.orthogroup_table})
+    python -m jcvi.formats.fasta extract CDS_longest_transcript/Lakota1_nosplicevariants.cds $LAK1GENE | sed "s/$LAK1GENE/Lakota1/g" >> single_copy_orthologs/{wildcards.og}/unaligned.fasta
+
+    PAWGENE=$(awk -v group={wildcards.og} '$1 == group {{ sub(/\r$/, ""); print $6}}' {input.orthogroup_table})
+    python -m jcvi.formats.fasta extract CDS_longest_transcript/Pawnee_nosplicevariants.cds $PAWGENE | sed "s/$PAWGENE/Pawnee/g" >> single_copy_orthologs/{wildcards.og}/unaligned.fasta
+    """
+
+rule align_single_copy_orthologs:
+  input:
+    "single_copy_orthologs/{og}/unaligned.fasta"
+  output:
+    "single_copy_orthologs/{og}/aligned.fasta"
+  resources:
+    mem_mb=10000,
+    runtime=60
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/iqtree.yaml"
+  shell:
+    "muscle -align {input} -output {output}"
+
+
+
+rule concat_ortholog_alignments:
+  input:
+    expand("single_copy_orthologs/{og}/aligned.fasta", og = SCO_LIST)
+  output:
+    "species_tree/concatenated_single_copy_ortholog_alignments.fasta"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/iqtree.yaml"
+  shell:
+    "seqkit concat {input} > {output}"
+
+
+rule species_phylogeny:
+  input:
+    "species_tree/concatenated_single_copy_ortholog_alignments.fasta"
+  output:
+    "species_tree/single_copy_orthologs.treefile"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/iqtree.yaml"
+  shell:
+    "iqtree -s {input} -B 1000 --prefix species_tree/single_copy_orthologs"
+
+

@@ -1,0 +1,959 @@
+import pandas as pd
+
+meta = pd.read_table("sra_samples_all.txt") # note that some of the varieties of the samples downloaded from SRA are misidentified, I use only a verified subset in the analyses that use phenotype information. File provided contains SRA samples used in final analyses. Sources for public data are given in Materials and Methods. 
+
+SRA_SAMPLES_ALL = meta['run'].tolist()
+
+Hutch_Lnwd = pd.read_table("Hutchinson_Linwood_samples.txt", header = None, names = ['ID']) # Relevant data provided in Table S2
+MYSAMPLES = Hutch_Lnwd['ID'].tolist()
+
+# these are the varieties that are OK to use from the sra data set
+SRA_VARS = ['Barton', 'Dependable', 'Excel', 'Farley', 'Kiowa', 'Mahan', 'Oconee', 'Pawnee', 'Shoshoni', 'Sioux', 'Sumner', 'VC1-68']
+SRA_SAMPLES = meta[meta['type'].isin(SRA_VARS)]['run'].tolist()
+
+ALLSAMPLES = SRA_SAMPLES_ALL + MYSAMPLES
+ANALYSIS_SAMPLES = SRA_SAMPLES + MYSAMPLES
+
+JREG_SAMPLES = ['Chandler','JG0026','JG0012']
+
+PAW_CHROMS = ['CM0318' + s + '.1' for s in ['09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24']]
+LAK1_CHROMS = ['CM0318' + x + '.1' for x in [str(s) for s in list(range(25, 41))]]
+
+GENOMES = ['Pawnee_v1', 'Lakota_v1', 'Lakota_alt', 'Elliott_v1', 'Oaxaca_v1', 'Elliott_alt','Csin_BNU', 'Ccat_BNU', 'Ccat_ZAF']
+
+ruleorder: bwa_map_regia_to_Lakota1 > bwa_map_mysamples > bwa_map_to_Pawnee > bwa_map_to_Lakota_v1
+#ruleorder: bwa_map_mysamples > bwa_map_to_Lak1
+
+
+# Specific output files can be produced by uncommenting lines in rule all. It is not recommended to try to run the entire pipeline at once. 
+rule all:
+  input:
+#    "calls/Jreg_to_Lakota1_chr4_CDS.vcf.gz",
+#    expand("/home/jgroh/heterodichogamy/regia/alignment_files/Lakota_v1/{sample}_sorted.cram", sample=['Chandler', 'JG0026', 'JG0012']),
+#    "results/LD_Lakota_v1.geno.ld",
+#    "results/LD_Pawnee_all.geno.ld",
+#    "results/LD_Pawnee_gg.geno.ld",
+#    "results/pixy/ind_het_Lakota_v1_CDS_pi.txt",
+#    "calls/WGS_cultivars_allsites_filtered_Lakota_v1.vcf.gz.tbi",
+#    "output/analysis_set_Lakota_v1_gemma.assoc.txt",
+#    "calls/WGS_cultivars_allsites_unfiltered_Lakota_v1.vcf.gz",
+#    "output/analysis_set_Lakota_v1.cXX.txt",
+#     "WGS_cultivars_samplot.png",
+#     "WGS_cultivars.fam",
+#     "output/WGS_cultivars_gemma.assoc.txt",
+#    expand("alignment_files/{genome}/{sample}_sorted.cram.crai",genome=GENOMES,sample=SAMPLES),
+#    expand("results/pixy/HH_vs_hh_{windowsize}_dxy.txt", windowsize=['500','5000']),
+#     "calls/WGS_cultivars_allsites_filtered.vcf.gz",
+#    expand("alignment_files/{genome}/{sample}_sorted.cram.crai",genome=GENOMES,sample=SAMPLES),
+#     expand("results/coverage_Pawnee/{sample}.txt.gz", sample=MYSAMPLES),
+#    expand("results/coverage_Csin_BNU/{sample}.txt.gz", sample=SAMPLES),
+#    expand("results/coverage_Ccat_BNU/{sample}.txt.gz", sample=SAMPLES),
+#    expand("results/coverage_Lakota_v1/{sample}.txt.gz", sample=SAMPLES),
+#    expand("results/coverage_Lakota_alt/{sample}.txt.gz", sample=SAMPLES2),
+#    expand("results/coverage_Elliott_v1/{sample}.txt.gz", sample=SAMPLES2),
+#    expand("results/coverage_Oaxaca_v1/{sample}.txt.gz", sample=SAMPLES2),
+#    "calls/WGS_cultivars_variant_subsample.vcf.gz",
+#    "results/WGS_cultivars.assoc.fisher",
+#    "calls/WGS_cultivars_allsites_unfiltered.vcf.gz",
+#    "results/vcftools/nvariants_unfiltered.txt",
+#    "results/vcftools/variant_subsample.frq",
+#    "results/vcftools/variant_subsample.lqual",
+#    "results/vcftools/variant_subsample.lmiss",
+#    "results/vcftools/variant_subsample.idepth",
+#    "results/vcftools/variant_subsample.ldepth.mean",
+#    "results/WGS_cultivars.assoc.fisher"
+#     expand("calls/WGS_cultivars_variant_filtered.vcf.gz"),
+#    expand("fastq/{sample}.fastq.gz", sample=SAMPLES),
+#    expand("alignment_files/{genome}/{sample}_sorted.cram", genome = ['Pawnee_v1'], sample = SAMPLES)
+
+rule download:
+  input:
+    "wgs_samples.tsv"
+  output:
+    r1="fasta/{sample}_1.fasta",
+    r2="fasta/{sample}_2.fasta"
+  resources:
+    runtime = 1440,
+    mem_mb = 40000
+  threads:
+    8
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/sra-tools.yaml"
+  shell:
+    """
+    fasterq-dump --outdir fasta/ --split-files --fasta --threads {threads} --skip-technical --verbose {wildcards.sample}
+    """
+
+rule gzip_fasta:
+  input:
+    "fasta/{sample}_{N}.fasta"
+  output:
+    "fasta/{sample}_{N}.fasta.gz"
+  shell:
+    "gzip {input}"
+
+rule bwa_map_to_Pawnee:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Pawnee_v1.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Pawnee_v1.fna.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Pawnee_v1/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Pawnee_v1/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Pawnee_v1/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Pawnee_v1/{wildcards.sample}
+    """
+
+rule bwa_map_mysamples:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/{genome}.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/{genome}.fna.bwt',
+    r1='fastq/{sample}_R1.fq.gz',
+    r2='fastq/{sample}_R2.fq.gz',
+  output:
+    "alignment_files/{genome}/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/{wildcards.genome}/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/{wildcards.genome}/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/{wildcards.genome}/{wildcards.sample}
+    """
+
+rule bwa_map_regia_to_Lakota1:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1.fna.bwt',
+    r1='/home/jgroh/heterodichogamy/regia/raw_reads/{sample}_R1.fastq.gz',
+    r2='/home/jgroh/heterodichogamy/regia/raw_reads/{sample}_R2.fastq.gz',
+  output:
+    "/home/jgroh/heterodichogamy/regia/alignment_files/Lakota_v1/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/{wildcards.sample}
+    """
+
+rule bwa_map_to_Lakota_v1:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1.fna.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Lakota_v1/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Lakota_v1/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Lakota_v1/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Lakota_v1/{wildcards.sample}
+    """
+
+rule bwa_map_to_Lakota_alt:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_alt.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_alt.fna.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Lakota_alt/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Lakota_alt/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Lakota_alt/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Lakota_alt/{wildcards.sample}
+    """
+
+rule bwa_map_to_Elliott_v1:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Elliott_v1.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Elliott_v1.fna.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Elliott_v1/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Elliott_v1/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Elliott_v1/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Elliott_v1/{wildcards.sample}
+    """
+
+rule bwa_map_to_Elliott_alt:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Elliott_alt.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Elliott_alt.fna.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Elliott_alt/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Elliott_alt/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Elliott_alt/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Elliott_alt/{wildcards.sample}
+    """
+
+rule bwa_map_to_Oaxaca:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Oaxaca_v1.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Oaxaca_v1.fna.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Oaxaca_v1/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Oaxaca_v1/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Oaxaca_v1/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Oaxaca_v1/{wildcards.sample}
+    """
+
+rule bwa_map_to_Csin_BNU:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Carya_sinensis/Carya_sinensis_BNU_v1.fa',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Carya_sinensis/Carya_sinensis_BNU_v1.fa.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Csin_BNU/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    12
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Csin_BNU/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Csin_BNU/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Csin_BNU/{wildcards.sample}
+    """
+
+rule bwa_map_to_Ccat_BNU:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Carya_cathayensis/BNU/Carya_cathayensis_BNU_v1.fa',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Carya_cathayensis/BNU/Carya_cathayensis_BNU_v1.fa.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Ccat_BNU/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    12
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Ccat_BNU/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Ccat_BNU/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Ccat_BNU/{wildcards.sample}
+    """
+
+rule bwa_map_to_Ccat_ZAF:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Carya_cathayensis/ZAF/GCA_011037825.1_ASM1103782v1_genomic.fna',
+    index='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Carya_cathayensis/ZAF/GCA_011037825.1_ASM1103782v1_genomic.fna.bwt',
+    r1='fasta/{sample}_1.fasta.gz',
+    r2='fasta/{sample}_2.fasta.gz',
+  output:
+    "alignment_files/Ccat_ZAF/{sample}_sorted.cram"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  resources:
+    runtime = lambda wildcards, attempt: attempt * 24 * 60,
+    mem_mb = lambda wildcards, attempt: attempt * 30000
+  threads:
+    24
+  shell:
+    """
+    mkdir -p tmp_sorted_reads/Ccat_ZAF/{wildcards.sample} &&
+    bwa mem -t {threads} -M -R '@RG\\tID:{wildcards.sample}\\tLB:{wildcards.sample}\\tSM:{wildcards.sample}' \
+        {input.fa} {input.r1} {input.r2} | \
+        samtools sort -O bam -l 0 -T tmp_sorted_reads/Ccat_ZAF/{wildcards.sample} - | \
+        samtools view -T {input.fa} -C -o {output} -
+    rm -r tmp_sorted_reads/Ccat_ZAF/{wildcards.sample}
+    """
+
+rule samtools_index_crams:
+  input:
+    "alignment_files/{genome}/{sample}_sorted.cram"
+  output:
+    "alignment_files/{genome}/{sample}_sorted.cram.crai"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "samtools index {input}"
+
+rule samtools_index_Jreg_crams:
+  input:
+    "/home/jgroh/heterodichogamy/regia/alignment_files/Lakota_v1/{sample}_sorted.cram"
+  output:
+    "/home/jgroh/heterodichogamy/regia/alignment_files/Lakota_v1/{sample}_sorted.cram.crai"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "samtools index {input}"
+
+
+rule samtools_coverage:
+  input:
+    cram="alignment_files/Pawnee_v1/{sample}_sorted.cram",
+    crai="alignment_files/Pawnee_v1/{sample}_sorted.cram.crai"
+  output:
+    focal="results/coverage_Pawnee/{sample}.txt.gz",
+    norm="results/coverage_Pawnee/{sample}_norm.txt" 
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    samtools depth -a {input.cram} -r CM031812.1:6000000-7000000 | gzip > {output.focal}
+    samtools depth -a {input.cram} -r CM031811.1 | awk '{{ sum += $3 }} END {{ mean = sum / NR; print mean}}' > {output.norm}
+    """
+
+
+rule samtools_coverage_Lakota_v1:
+  input:
+    cram="alignment_files/Lakota_v1/{sample}_sorted.cram",
+    crai="alignment_files/Lakota_v1/{sample}_sorted.cram.crai"
+  output:
+    focal="results/coverage_Lakota_v1/{sample}.txt.gz",
+    norm="results/coverage_Lakota_v1/{sample}_norm.txt" 
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    samtools depth -a {input.cram} -r CM031828.1:6000000-7500000 | gzip > {output.focal}
+    samtools depth -a {input.cram} -r CM031829.1 | awk '{{ sum += $3 }} END {{ mean = sum / NR; print mean}}' > {output.norm}
+    """
+
+rule samtools_coverage_Lakota_alt:
+  input:
+    cram="alignment_files/Lakota_alt/{sample}_sorted.cram",
+    crai="alignment_files/Lakota_alt/{sample}_sorted.cram.crai"
+  output:
+    focal="results/coverage_Lakota_alt/{sample}.txt.gz",
+    norm="results/coverage_Lakota_alt/{sample}_norm.txt" 
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    samtools depth -a {input.cram} -r JAEUGS010000086.1 | gzip > {output.focal}
+    samtools depth -a {input.cram} -r JAEUGS010000006.1 | awk '{{ sum += $3 }} END {{ mean = sum / NR; print mean}}' > {output.norm}
+    """
+
+rule samtools_coverage_Elliott_v1:
+  input:
+    cram="alignment_files/Elliott_v1/{sample}_sorted.cram",
+    crai="alignment_files/Elliott_v1/{sample}_sorted.cram.crai"
+  output:
+    focal="results/coverage_Elliott_v1/{sample}.txt.gz",
+    norm="results/coverage_Elliott_v1/{sample}_norm.txt" 
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    samtools depth -a {input.cram} -r CM031844.1:5800000-6400000 | gzip > {output.focal}
+    samtools depth -a {input.cram} -r CM031848.1 | awk '{{ sum += $3 }} END {{ mean = sum / NR; print mean}}' > {output.norm}
+    """
+
+rule samtools_coverage_Oaxaca_v1:
+  input:
+    cram="alignment_files/Oaxaca_v1/{sample}_sorted.cram",
+    crai="alignment_files/Oaxaca_v1/{sample}_sorted.cram.crai"
+  output:
+    focal="results/coverage_Oaxaca_v1/{sample}.txt.gz",
+    norm="results/coverage_Oaxaca_v1/{sample}_norm.txt" 
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    samtools depth -a {input.cram} -r CM028999.1:6500000-7500000 | gzip > {output.focal}
+    samtools depth -a {input.cram} -r CM029000.1 | awk '{{ sum += $3 }} END {{ mean = sum / NR; print mean}}' > {output.norm}
+    """
+
+
+rule samtools_coverage_Csin:
+  input:
+    cram="alignment_files/Csin_BNU/{sample}_sorted.cram",
+    crai="alignment_files/Csin_BNU/{sample}_sorted.cram.crai"
+  output:
+    focal="results/coverage_Csin_BNU/{sample}.txt.gz",
+    norm="results/coverage_Csin_BNU/{sample}_norm.txt" 
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    samtools depth -a {input.cram} -r Chr04:5600000-7000000 | gzip > {output.focal}
+    samtools depth -a {input.cram} -r Chr05 | awk '{{ sum += $3 }} END {{ mean = sum / NR; print mean}}' > {output.norm}
+    """
+
+rule samtools_coverage_Ccat_BNU:
+  input:
+    cram="alignment_files/Ccat_BNU/{sample}_sorted.cram",
+    crai="alignment_files/Ccat_BNU/{sample}_sorted.cram.crai"
+  output:
+    focal="results/coverage_Ccat_BNU/{sample}.txt.gz",
+    norm="results/coverage_Ccat_BNU/{sample}_norm.txt" 
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    samtools depth -a {input.cram} -r Chr04:6800000-7800000 | gzip > {output.focal}
+    samtools depth -a {input.cram} -r Chr05 | awk '{{ sum += $3 }} END {{ mean = sum / NR; print mean}}' > {output.norm}
+    """
+
+
+
+rule bcftools_call_by_chrom:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/{genome}.fna',
+    fai='/home/jgroh/heterodichogamy/Carya_genome_assemblies/{genome}.fna.fai',
+    crams=expand("alignment_files/{{genome}}/{sample}_sorted.cram", sample=ALLSAMPLES),
+    crai=expand("alignment_files/{{genome}}/{sample}_sorted.cram.crai", sample=ALLSAMPLES)
+  output:
+    temp("calls/WGS_cultivars_{chr}_to{genome}.vcf.gz")
+  resources:
+    runtime = 48 * 60,
+    mem_mb = 50000
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    bcftools mpileup -Ou -f {input.fa} -r {wildcards.chr} \
+        --annotate "AD,DP,INFO/AD" {input.crams} | bcftools call -m -f GQ,GP -o {output}
+    """
+
+rule bcftools_call_regia_CDS:
+  input:
+    fa='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1.fna',
+    fai='/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1.fna.fai',
+    crams=expand("/home/jgroh/heterodichogamy/regia/alignment_files/Lakota_v1/{sample}_sorted.cram", sample=JREG_SAMPLES),
+    crai=expand("/home/jgroh/heterodichogamy/regia/alignment_files/Lakota_v1/{sample}_sorted.cram.crai", sample=JREG_SAMPLES)
+  output:
+    "calls/Jreg_to_Lakota1_chr4_CDS.vcf.gz"
+  resources:
+    runtime = 24 * 60,
+    mem_mb = 20000
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    bcftools mpileup -Ou -f {input.fa} -R /home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1_chr4_CDS_coords.txt \
+        --annotate "AD,DP,INFO/AD" {input.crams} | bcftools call -m -f GQ,GP -o {output}
+    """
+
+rule bcftools_concat_chr_bams_Pawnee:
+  input:
+    expand("calls/WGS_cultivars_{chr}_toPawnee_v1.vcf.gz", chr = PAW_CHROMS)
+  output:
+    "calls/WGS_cultivars_allsites_unfiltered.vcf.gz"
+  resources:
+    runtime = 24 * 60,
+    mem_mb = 30000
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "bcftools concat {input} -o {output}"
+
+
+rule bcftools_concat_chr_bams_Lak1:
+  input:
+    expand("calls/WGS_cultivars_{chr}_toLakota_v1.vcf.gz", chr = LAK1_CHROMS)
+  output:
+    "calls/WGS_cultivars_allsites_unfiltered_Lakota_v1.vcf.gz"
+  resources:
+    runtime = 24 * 60,
+    mem_mb = 30000
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "bcftools concat {input} -o {output}"
+
+
+rule vcftools_subset_variant_sites:
+  input:
+    "calls/WGS_cultivars_allsites_unfiltered_{genome}.vcf.gz"
+  output:
+    "calls/WGS_cultivars_variant_unfiltered_{genome}.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    "vcftools --gzvcf {input} --mac 1 --recode --stdout | bgzip -c > {output}"
+
+rule vcftools_subset_invariant_sites:
+  input:
+    "calls/WGS_cultivars_allsites_unfiltered_{genome}.vcf.gz"
+  output:
+    "calls/WGS_cultivars_invariant_unfiltered_{genome}.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  resources:
+    runtime=24*60,
+    mem_mb=50000
+  shell:
+    "vcftools --gzvcf {input} --max-maf 0 --recode --stdout | bgzip -c > {output}"
+
+
+rule nvariant_sites_unfiltered:
+  input:
+    "calls/WGS_cultivars_variant_unfiltered.vcf.gz"
+  output:
+    "results/vcftools/nvariants_unfiltered.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "bcftools view -H {input} | wc -l > {output}"
+
+rule subsample_unfiltered_variants:
+  input:
+    "calls/WGS_cultivars_variant_unfiltered.vcf.gz"
+  output:
+    "calls/WGS_cultivars_variant_subsample.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    "bcftools view {input} | vcfrandomsample -r 0.01 | bgzip -c > {output}"
+
+
+rule vcftools_freqs:
+  input:
+    "calls/WGS_cultivars_variant_subsample.vcf.gz"
+  output:
+    "results/vcftools/variant_subsample.frq"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    "vcftools --gzvcf {input} --freq2 --max-alleles 2 --stdout > {output}"
+
+rule vcftools_site_qual:
+  input:
+    "calls/WGS_cultivars_variant_subsample.vcf.gz"
+  output:
+    "results/vcftools/variant_subsample.lqual"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    "vcftools --gzvcf {input} --site-quality --stdout > {output}"
+
+rule vcftools_missing_site:
+  input:
+    "calls/WGS_cultivars_variant_subsample.vcf.gz"
+  output:
+    "results/vcftools/variant_subsample.lmiss"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    "vcftools --gzvcf {input} --missing-site --stdout > {output}"
+
+rule vcftools_individual_depth:
+  input:
+    "calls/WGS_cultivars_variant_subsample.vcf.gz"
+  output:
+    "results/vcftools/variant_subsample.idepth"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    "vcftools --gzvcf {input} --depth --stdout > {output}"
+
+rule vcftools_mean_site_depth:
+  input:
+    "calls/WGS_cultivars_variant_subsample.vcf.gz"
+  output:
+    "results/vcftools/variant_subsample.ldepth.mean"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    "vcftools --gzvcf {input} --site-mean-depth --stdout > {output}"
+
+
+rule vcftools_filter_variant_sites:
+  input:
+    "calls/WGS_cultivars_variant_unfiltered_{genome}.vcf.gz"
+  output:
+    "calls/WGS_cultivars_variant_filtered_{genome}.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    """
+    vcftools --gzvcf {input} \
+        --remove-indels \
+        --mac 2 \
+        --max-missing 0.8 \
+        --minQ 30 \
+        --minGQ 30 \
+        --minDP 10 \
+        --maxDP 200 \
+        --min-alleles 2 \
+        --max-alleles 2 \
+        --recode --stdout | bgzip -c > {output}
+    """
+
+rule vcftools_filter_invariant_sites:
+  input:
+    "calls/WGS_cultivars_invariant_unfiltered_{genome}.vcf.gz"
+  output:
+    "calls/WGS_cultivars_invariant_filtered_{genome}.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    """
+    vcftools --gzvcf {input} \
+        --remove-indels \
+        --max-missing 0.8 \
+        --minQ 30 \
+        --minGQ 30 \
+        --minDP 10 \
+        --maxDP 200 \
+        --recode --stdout | bgzip -c > {output}
+    """
+
+rule index_filtered_vcfs:
+  input:
+    "calls/WGS_cultivars_{sites}_filtered_{genome}.vcf.gz"
+  output:
+    "calls/WGS_cultivars_{sites}_filtered_{genome}.vcf.gz.csi"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "bcftools index {input}"
+
+
+rule concat_vcfs:
+  input:
+    variant="calls/WGS_cultivars_variant_filtered_{genome}.vcf.gz",
+    invariant="calls/WGS_cultivars_invariant_filtered_{genome}.vcf.gz",
+    variant_csi="calls/WGS_cultivars_variant_filtered_{genome}.vcf.gz.csi",
+    invariant_csi="calls/WGS_cultivars_invariant_filtered_{genome}.vcf.gz.csi",
+  output:
+    "calls/WGS_cultivars_allsites_filtered_{genome}.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "bcftools concat --allow-overlaps {input.variant} {input.invariant} -O z -o {output}"
+
+
+rule index_allsites_vcf:
+  input:
+    "calls/WGS_cultivars_allsites_filtered_{genome}.vcf.gz"
+  output:
+    "calls/WGS_cultivars_allsites_filtered_{genome}.vcf.gz.tbi"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "tabix {input}"
+
+rule index_allsites_vcf_homozygotes:
+  input:
+    "calls/WGS_cultivars_allsites_filtered_homozygotes_chr4.vcf.gz"
+  output:
+    "calls/WGS_cultivars_allsites_filtered_homozygotes_chr4.vcf.gz.tbi"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "tabix {input}"
+
+
+rule keep_ids:
+  input:
+    variant="calls/WGS_cultivars_variant_filtered_{genome}.vcf.gz",
+    ids="analysis_set_ids.txt"
+  output:
+    "calls/analysis_set_{genome}.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    bcftools view --samples-file {input.ids} -Ou -o {output} {input.variant}
+    """
+
+rule index_subset:
+  input:
+    "calls/analysis_set_{genome}.vcf.gz"
+  output:
+    "calls/analysis_set_{genome}.vcf.gz.csi"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "bcftools index {input}"
+
+rule subset_to_cds:
+  input:
+    cds="calls/Pawnee_CDS_regions.txt",
+    bcf="calls/WGS_cultivars_variant_filtered_analysis_set.bcf",
+    csi="calls/WGS_cultivars_variant_filtered_analysis_set.bcf.csi"
+  output:
+    "calls/WGS_cultivars_analysis_set_CDS.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "bcftools view --regions-file {input.cds} -o {output} {input.bcf}"
+
+
+
+rule vcf_to_plink:
+  input:
+    "calls/analysis_set_Lakota_v1.vcf.gz"
+  output:
+    bed="analysis_set_Lakota_v1.bed",
+    bim="analysis_set_Lakota_v1.bim",
+    fam="analysis_set_Lakota_v1.fam" # edit this one manually afterwards with phenotypes
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/plink_1.90.yaml"
+  shell:
+    "plink --vcf {input} --const-fid 0 --allow-extra-chr --out analysis_set_Lakota_v1"
+  
+rule gemma_relatedness_matrix:
+  input:
+    bed="analysis_set_Lakota_v1.bed",
+    bim="analysis_set_Lakota_v1.bim",
+    fam="analysis_set_Lakota_v1.fam" # AFTER manual edit with phenotypes
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/gemma.yaml"
+  output:
+    "output/analysis_set_Lakota_v1.cXX.txt"
+  shell:
+    "gemma -bfile analysis_set_Lakota_v1 -gk 1 -o analysis_set_Lakota_v1"
+
+rule gemma_lmm:
+  input:
+    bed="analysis_set_Lakota_v1.bed",
+    bim="analysis_set_Lakota_v1.bim",
+    fam="analysis_set_Lakota_v1.fam", # AFTER manual edit with phenotypes
+    mat="output/analysis_set_Lakota_v1.cXX.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/gemma.yaml"
+  output:
+    "output/analysis_set_Lakota_v1_gemma.assoc.txt"
+  shell:
+    "gemma -bfile analysis_set_Lakota_v1 -k {input.mat} -lmm 2 -miss 0.1 -maf 0.2 -o analysis_set_Lakota_v1_gemma"
+
+rule plink_assoc:
+  input:
+    bed="WGS_cultivars.bed",
+    bim="WGS_cultivars.bim",
+    fam="WGS_cultivars.fam" # after manual edit
+  output:
+    "results/WGS_cultivars.assoc.fisher"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/plink_1.90.yaml"
+  shell:
+    """
+    plink -bfile WGS_cultivars --assoc fisher \
+        --allow-extra-chr \
+        --allow-no-sex \
+        --out results/WGS_cultivars
+    """
+
+rule subset_homozygotes:
+  input:
+    "calls/WGS_cultivars_allsites_filtered.vcf.gz"
+  output:
+    "calls/WGS_cultivars_allsites_filtered_homozygotes_chr4.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  threads:
+    12
+  shell:
+    """
+    vcftools --gzvcf {input} \
+        --chr CM031812.1 \
+        --keep homozygotes.txt \
+        --recode --stdout | bgzip -c > {output}
+    """
+  
+
+
+rule pixy_dxy_windows:
+  input:
+    vcf="calls/WGS_cultivars_allsites_filtered_Lakota_v1.vcf.gz",
+    tbi="calls/WGS_cultivars_allsites_filtered_Lakota_v1.vcf.gz.tbi",
+    pops="pixy_pops_HH_vs_hh.txt"
+  output:
+    "results/pixy/HH_vs_hh_{windowsize}_dxy.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/pixy.yaml"
+  threads:
+    12
+  shell:
+    """
+    pixy --stats dxy --vcf {input.vcf} \
+        --populations {input.pops} \
+        --window_size {wildcards.windowsize} \
+        --output_folder 'results/pixy' \
+        --output_prefix HH_vs_hh_{wildcards.windowsize} \
+        --n_cores {threads}
+    """
+
+rule pixy_individual_heterozygosity_CDS:
+  input:
+    vcf="calls/WGS_cultivars_allsites_filtered_Lakota_v1.vcf.gz",
+    tbi="calls/WGS_cultivars_allsites_filtered_Lakota_v1.vcf.gz.tbi",
+    pops="pixy_popfile_for_heterozygosity.txt",
+    bed="/home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1_CDS_coords.txt" 
+  output:
+    "results/pixy/ind_het_Lakota_v1_CDS_pi.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/pixy.yaml"
+  threads:
+    100
+  shell:
+    """
+    pixy --stats dxy --vcf {input.vcf} \
+        --populations {input.pops} \
+        --bed_file {input.bed} \
+        --output_folder 'results/pixy' \
+        --output_prefix ind_het_Lakota_v1_CDS \
+        --n_cores {threads}
+    """
+    
+
+rule vcftools hh012:
+  input:
+    "calls/WGS_cultivars_variant_filtered_Lakota_v1.vcf.gz"
+  output:
+    "calls/hh_Lak1_CDS_chr4_6.4-7.05Mb.012"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    """
+    vcftools --gzvcf {input} \
+        --keep hh_homozygotes.txt \
+        --bed /home/jgroh/heterodichogamy/Carya_genome_assemblies/Lakota_v1_CDS_coords_0based.bed \
+        --chr "CM031828.1" \
+        --from-bp 6400000 \
+        --to-bp 7050000 \
+        --012 \
+        --out calls/hh_Lak1_chr4_6.4-7.05Mb
+    """
+
+
+rule geno_r2_Lak1:
+  input:
+    "calls/WGS_cultivars_variant_filtered_Lakota_v1.vcf.gz"
+  output:
+    "results/LD_Lakota_v1.geno.ld"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    """
+    vcftools --gzvcf {input} --chr CM031828.1 --from-bp 6350000 --to-bp 7100000 --geno-r2 --ld-window-bp-min 1000 --out results/LD_Lakota_v1
+    """
+
+rule geno_r2_Pawnee_all:
+  input:
+    "calls/WGS_cultivars_variant_filtered.vcf.gz"
+  output:
+    "results/LD_Pawnee_all.geno.ld"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    """
+    vcftools --gzvcf {input} --chr CM031812.1 --from-bp 6420000 --to-bp 6705000 --geno-r2 --ld-window-bp-min 5000 --out results/LD_Pawnee_all
+    """
+
+
+rule geno_r2_Pawnee_gg:
+  input:
+    "calls/WGS_cultivars_variant_filtered.vcf.gz"
+  output:
+    "results/LD_Pawnee_gg.geno.ld"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/vcftools.yaml"
+  shell:
+    """
+    vcftools --gzvcf {input} --keep all_gg_genotypes.txt --chr CM031812.1 --from-bp 6420000 --to-bp 6705000 --geno-r2 --ld-window-bp-min 5000 --out results/LD_Pawnee_gg
+    """
+

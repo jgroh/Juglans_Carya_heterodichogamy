@@ -1,0 +1,404 @@
+# These commands were used to process RNA-seq data generated for J. hindsii and J. regia. Similar commands were used for analyses of public data sets from other species. 
+
+import pandas as pd
+
+REGIA_PG = ["JREG_CHICO","JREG_ERLST","JREG_PLACN","JREG_SHARK"]
+REGIA_PA = ["JREG_CHAND","JREG_KLPNG","JREG_PI159"]
+
+REGIA = REGIA_PG + REGIA_PA
+
+HINDSII_PG = ["JHIN_001","JHIN_013","JHIN_023"]
+HINDSII_PA = ["JHIN_002","JHIN_006","JHIN_014"]
+
+HINDSII = HINDSII_PG + HINDSII_PA
+
+
+# Specific outputs can be produced by uncommenting lines in the rule below. It is not recommended to try to run the entire pipeline all at once. 
+rule all:
+  input:
+#    "hindsii_allele_depths_TPPD-1_Jcali_alt.txt",
+#    "calls/hindsii/TPPD-1_Jcali_alt.vcf.gz",
+#    "regia_allele_depths_TPPD-1.txt",
+#    expand("calls/{species}/TPPD-1.vcf.gz", species = ['hindsii', 'regia']),
+#    expand("coverage/hindsii/{sample}.txt.gz", sample = HINDSII),
+#    expand("coverage/hindsii_Rawlins_hap2/{sample}.txt.gz", sample = HINDSII_PG),
+#    expand("coverage/regia_Sharkey_hap1/{sample}.txt.gz", sample  = REGIA),
+#    expand("coverage/regia/{sample}.txt.gz", sample = REGIA),
+#    expand("quants/{sample}_quant/quant.sf", sample = HINDSII+REGIA),
+#    #expand("alignment_files/Jhin_Rawlins_hap1/{sample}.Aligned.sortedByCoord.out.bam", sample = HINDSII),
+#    expand("alignment_files/Jcali_alt/{sample}_filtered.bam", sample = HINDSII),
+#    expand("alignment_files/JregCha/{sample}.Aligned.sortedByCoord.out.bam", sample = REGIA),
+
+rule salmon_index_Jreg:
+  input:
+    "Jregia_transcriptome.fasta"
+  output:
+    "Jregia_transcriptome_index"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/salmon.yaml"
+  shell:
+    "salmon index -t {input} -i {output}" 
+
+rule salmon:
+  input:
+    r1="trimmed_reads/{sample}-trimmed-pair1.fastq.gz",
+    r2="trimmed_reads/{sample}-trimmed-pair2.fastq.gz",
+    transcriptome="Jregia_transcriptome.fasta",
+    index="Jregia_transcriptome_index"
+  output:
+    "quants/{sample}_quant/quant.sf"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/salmon.yaml"
+  shell:
+    """
+    salmon quant -i {input.index} \
+        -l A -1 {input.r1} -2 {input.r2} \
+        -p 8 --validateMappings \
+        --gcBias \
+        -o quants/{wildcards.sample}_quant
+    """
+
+rule skewer:
+  input:
+    r1="raw_reads/{sample}_R1.fastq.gz",
+    r2="raw_reads/{sample}_R2.fastq.gz",
+  output:
+    r1="trimmed_reads/{sample}-trimmed-pair1.fastq.gz",
+    r2="trimmed_reads/{sample}-trimmed-pair2.fastq.gz",
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/skewer.yaml"
+  threads:
+    20
+  shell:
+    """
+    skewer -m any --threads {threads} --compress --output trimmed_reads/{wildcards.sample} {input.r1} {input.r2}
+    """
+
+rule STAR_index_Rawlins_hap1:
+  input:
+    fa="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/Rawlins_hap1.fasta",
+    gff="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/Rawlins_hap1_liftoff.gff"
+  output:
+    "/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/SA"
+  threads:
+    20
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/star.yaml"
+  resources:
+    mem_mb=50000,
+    runtime=60
+  shell:
+    """
+    STAR --runThreadN {threads} --runMode genomeGenerate --genomeDir /group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final \
+        --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gff} --sjdbGTFtagExonParentTranscript Parent --sjdbOverhang 150 \
+        --genomeSAindexNbases 13
+    """
+
+rule STAR_index_Rawlins_hap2:
+  input:
+    fa="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/hap2/Rawlins_hap2.fasta",
+    gff="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/Rawlins_hap2_liftoff.gff"
+  output:
+    "/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/hap2/SA"
+  threads:
+    20
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/star.yaml"
+  resources:
+    mem_mb=50000,
+    runtime=60
+  shell:
+    """
+    STAR --runThreadN {threads} --runMode genomeGenerate --genomeDir /group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/hap2 \
+        --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gff} --sjdbGTFtagExonParentTranscript Parent --sjdbOverhang 150 \
+        --genomeSAindexNbases 13
+    """
+
+
+rule STAR_index_Jcali_alt:
+  input:
+    fa="/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jcalifornica/Jcali_alt.fna",
+    gff="/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jcalifornica/Jcali_alt.gff"
+  output:
+    "/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jcalifornica/SA"
+  threads:
+    20
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/star.yaml"
+  resources:
+    mem_mb=50000,
+    runtime=60
+  shell:
+    """
+    STAR --runThreadN {threads} --runMode genomeGenerate --genomeDir /home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jcalifornica \
+        --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gff} --sjdbGTFtagExonParentTranscript Parent --sjdbOverhang 150 \
+        --genomeSAindexNbases 13
+    """
+
+rule STAR_align_regia:
+  input:
+    fa="/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jregia/Chandler/GCF_001411555.2_Walnut_2.0_genomic.fna",
+    index="/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jregia/Chandler/SA",
+    r1="trimmed_reads/{sample}-trimmed-pair1.fastq.gz",
+    r2="trimmed_reads/{sample}-trimmed-pair2.fastq.gz",
+  output:
+    "alignment_files/JregCha/{sample}.Aligned.sortedByCoord.out.bam"
+  threads:
+    30
+  resources:
+    mem_mb=50000,
+    runtime=12*60
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/star.yaml"
+  shell:
+    """
+    STAR --runThreadN {threads} \
+        --genomeDir /home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jregia/Chandler \
+        --readFilesIn {input.r1} {input.r2} \
+        --readFilesCommand zcat \
+        --outFileNamePrefix alignment_files/JregCha/{wildcards.sample}. \
+        --outSAMtype BAM SortedByCoordinate \
+        --quantMode GeneCounts
+    """
+
+rule STAR_index_Sharkey_hap1:
+  input:
+    fa="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Sharkey/final/Sharkey_hap1.fasta",
+    gff="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Sharkey/final/Sharkey_hap1_liftoff.gff"
+  output:
+    "/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Sharkey/final/SA"
+  threads:
+    20
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/star.yaml"
+  resources:
+    mem_mb=50000,
+    runtime=60
+  shell:
+    """
+    STAR --runThreadN {threads} --runMode genomeGenerate --genomeDir /group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Sharkey/final \
+        --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gff} --sjdbGTFtagExonParentTranscript Parent --sjdbOverhang 150 \
+        --genomeSAindexNbases 13
+    """
+
+rule STAR_align_hindsii:
+  input:
+    #fa="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/Rawlins_hap1.fasta",
+    fa="/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jcalifornica/Jcali_alt.fna",
+    index="/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jcalifornica/SA",
+    r1="trimmed_reads/{sample}-trimmed-pair1.fastq.gz",
+    r2="trimmed_reads/{sample}-trimmed-pair2.fastq.gz",
+  output:
+    #"alignment_files/Jhin_Rawlins_hap1/{sample}.Aligned.sortedByCoord.out.bam"
+    "alignment_files/Jcali_alt/{sample}.Aligned.sortedByCoord.out.bam"
+  threads:
+    30
+  resources:
+    mem_mb=50000,
+    runtime=12*60
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/star.yaml"
+  shell:
+    """
+    STAR --runThreadN {threads} \
+        --genomeDir /home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jcalifornica \
+        --readFilesIn {input.r1} {input.r2} \
+        --readFilesCommand zcat \
+        --outFileNamePrefix alignment_files/Jcali_alt/{wildcards.sample}. \
+        --outSAMtype BAM SortedByCoordinate \
+        --quantMode GeneCounts
+    """
+
+rule STAR_align_hindsii_Rawlins_hap2:
+  input:
+    fa="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/hap2/Rawlins_hap2.fasta",
+    index="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/hap2/SA",
+    r1="trimmed_reads/{sample}-trimmed-pair1.fastq.gz",
+    r2="trimmed_reads/{sample}-trimmed-pair2.fastq.gz",
+  output:
+    #"alignment_files/Jhin_Rawlins_hap1/{sample}.Aligned.sortedByCoord.out.bam"
+    "alignment_files/Rawlins_hap2/{sample}.Aligned.sortedByCoord.out.bam"
+  threads:
+    30
+  resources:
+    mem_mb=50000,
+    runtime=12*60
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/star.yaml"
+  shell:
+    """
+    STAR --runThreadN {threads} \
+        --genomeDir /group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/hap2 \
+        --readFilesIn {input.r1} {input.r2} \
+        --readFilesCommand zcat \
+        --outFileNamePrefix alignment_files/Rawlins_hap2/{wildcards.sample}. \
+        --outSAMtype BAM SortedByCoordinate \
+        --quantMode GeneCounts
+    """
+
+rule STAR_align_hindsii_Sharkey_hap1:
+  input:
+    fa="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Sharkey/final/Sharkey_hap1.fasta",
+    index="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Sharkey/final/SA",
+    r1="trimmed_reads/{sample}-trimmed-pair1.fastq.gz",
+    r2="trimmed_reads/{sample}-trimmed-pair2.fastq.gz",
+  output:
+    #"alignment_files/Jhin_Rawlins_hap1/{sample}.Aligned.sortedByCoord.out.bam"
+    "alignment_files/Sharkey_hap1/{sample}.Aligned.sortedByCoord.out.bam"
+  threads:
+    30
+  resources:
+    mem_mb=50000,
+    runtime=12*60
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/star.yaml"
+  shell:
+    """
+    STAR --runThreadN {threads} \
+        --genomeDir /group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Sharkey/final \
+        --readFilesIn {input.r1} {input.r2} \
+        --readFilesCommand zcat \
+        --outFileNamePrefix alignment_files/Sharkey_hap1/{wildcards.sample}. \
+        --outSAMtype BAM SortedByCoordinate \
+        --quantMode GeneCounts
+    """
+
+rule filter_alignment:
+  input:
+    "alignment_files/{gnom}/{sample}.Aligned.sortedByCoord.out.bam"
+  output:
+    "alignment_files/{gnom}/{sample}_filtered.bam"
+  resources:
+    mem_mb=10000,
+    runtime=60
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "samtools view --exclude-flags 2816 --min-MQ 255 {input} -o {output}"
+
+
+
+rule index_bam:
+  input:
+    "alignment_files/{genome}/{sample}_filtered.bam"
+  output:
+    "alignment_files/{genome}/{sample}_filtered.bam.bai"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "samtools index {input}"
+
+rule regia_call_TPPD1:
+  input:
+    fa="/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jregia/Chandler/GCF_001411555.2_Walnut_2.0_genomic.fna",
+    bams=expand("alignment_files/JregCha/{sample}_filtered.bam", sample = REGIA),
+    bai=expand("alignment_files/JregCha/{sample}_filtered.bam.bai", sample = REGIA),
+  output:
+    "calls/regia/TPPD-1.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    bcftools mpileup -Ou -f {input.fa} -r NC_049911.1:31884378-31887006 \
+        --annotate "AD,INFO/AD" {input.bams} | bcftools call -m -v -o {output}
+    """
+
+
+rule hindsii_call_TPPD1:
+  input:
+    fa="/group/gmcoopgrp2/jgroh/heterodichogamy2/HiFi_assemblies/Rawlins/final/Rawlins_hap1.fasta",
+    bams=expand("alignment_files/Jhin_Rawlins_hap1/{sample}_filtered.bam", sample = HINDSII),
+    bai=expand("alignment_files/Jhin_Rawlins_hap1/{sample}_filtered.bam.bai", sample = HINDSII),
+  output:
+    "calls/hindsii/TPPD-1.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    bcftools mpileup -Ou -f {input.fa} -r NC_049911.1:30710259-30713073 \
+        --annotate "AD,INFO/AD" {input.bams} | bcftools call -m -v -o {output}
+    """
+
+rule hindsii_call_TPPD1_Jcali_alt:
+  input:
+    fa="/home/jgroh/heterodichogamy/Juglans_genome_assemblies/Jcalifornica/Jcali_alt.fna",
+    bams=expand("alignment_files/Jcali_alt/{sample}_filtered.bam", sample = HINDSII),
+    bai=expand("alignment_files/Jcali_alt/{sample}_filtered.bam.bai", sample = HINDSII),
+  output:
+    "calls/hindsii/TPPD-1_Jcali_alt.vcf.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell: # choose coordinates outside 3' UTR CNV
+    """
+    bcftools mpileup -Ou -f {input.fa} -r JAKSXL010000006.1:30517750-30520347  \
+        --annotate "AD,INFO/AD" {input.bams} | bcftools call -m -v -o {output}
+    """
+
+rule depth_hindsii:
+  input:
+    bam="alignment_files/Jhin_Rawlins_hap1/{sample}_filtered.bam",
+    bai="alignment_files/Jhin_Rawlins_hap1/{sample}_filtered.bam.bai",
+  output:
+    "coverage/hindsii/{sample}.txt.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "samtools depth -a {input.bam} -r NC_049911.1:30691000-30714000 | gzip > {output}"
+
+rule depth_hindsii_Rawlins_hap2: # useful for getting exact coordinates of UTR
+  input:
+    bam="alignment_files/Rawlins_hap2/{sample}_filtered.bam",
+    bai="alignment_files/Rawlins_hap2/{sample}_filtered.bam.bai",
+  output:
+    "coverage/hindsii_Rawlins_hap2/{sample}.txt.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "samtools depth -a {input.bam} -r NC_049911.1:32340000-32350000 | gzip > {output}"
+
+rule depth_regia:
+  input:
+    bam="alignment_files/JregCha/{sample}_filtered.bam",
+    bai="alignment_files/JregCha/{sample}_filtered.bam.bai",
+  output:
+    "coverage/regia/{sample}.txt.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "samtools depth -a {input.bam} -r NC_049911.1:31868751-31888000 | gzip > {output}"
+
+rule depth_regia_Sharkey_hap1:
+  input:
+    bam="alignment_files/Sharkey_hap1/{sample}_filtered.bam",
+    bai="alignment_files/Sharkey_hap1/{sample}_filtered.bam.bai",
+  output:
+    "coverage/regia_Sharkey_hap1/{sample}.txt.gz"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    "samtools depth -a {input.bam} -r NC_049911.1:31970000-32000000 | gzip > {output}"
+
+rule regia_allele_depth:
+  input:
+    "calls/regia/TPPD-1.vcf.gz"
+  output:
+    "regia_allele_depths_TPPD-1.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    bcftools view {input} | bcftools query -f '%CHROM:%POS %REF %ALT [%SAMPLE=%AD ]\n' > {output}
+    """
+
+rule hindsii_allele_depth:
+  input:
+    "calls/hindsii/TPPD-1_Jcali_alt.vcf.gz"
+  output:
+    "hindsii_allele_depths_TPPD-1_Jcali_alt.txt"
+  conda:
+    "/home/jgroh/heterodichogamy/conda_envs/samtools_1.17.yaml"
+  shell:
+    """
+    bcftools view {input} | bcftools query -f '%CHROM:%POS %REF %ALT [%SAMPLE=%AD ]\n' > {output}
+    """
+
